@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.macband.app</string>
+<key>CFBundleName</key><string>MacBand</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>MacBand transcribes sung vocals so the words can be shown on the tuned notes.</string>
+<key>NSMicrophoneUsageDescription</key><string>MacBand records vocals and other audio from your microphone.</string>
+</dict></plist>

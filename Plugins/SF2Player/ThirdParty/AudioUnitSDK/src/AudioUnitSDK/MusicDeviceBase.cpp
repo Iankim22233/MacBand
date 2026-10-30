@@ -1,0 +1,113 @@
+/*!
+	@file		AudioUnitSDK/MusicDeviceBase.cpp
+	@copyright	© 2000-2025 Apple Inc. All rights reserved.
+*/
+#include <AudioUnitSDK/AUConfig.h>
+
+#if AUSDK_HAVE_MUSIC_DEVICE
+
+#include <AudioUnitSDK/AUUtility.h>
+#include <AudioUnitSDK/MusicDeviceBase.h>
+
+#include <AudioToolbox/MusicDevice.h>
+
+namespace ausdk {
+
+AUSDK_BEGIN_NO_RT_WARNINGS
+
+MusicDeviceBase::MusicDeviceBase(
+	AudioComponentInstance inInstance, UInt32 numInputs, UInt32 numOutputs, UInt32 numGroups)
+	: AUBase(inInstance, numInputs, numOutputs, numGroups), AUMIDIBase(*static_cast<AUBase*>(this))
+{
+}
+
+OSStatus MusicDeviceBase::GetPropertyInfo(AudioUnitPropertyID inID, AudioUnitScope inScope,
+	AudioUnitElement inElement, UInt32& outDataSize, bool& outWritable)
+{
+	switch (inID) { // NOLINT if/else
+	case kMusicDeviceProperty_InstrumentCount:
+		AUSDK_Require(inScope == kAudioUnitScope_Global, kAudioUnitErr_InvalidScope);
+		outDataSize = sizeof(UInt32);
+		outWritable = false;
+		return noErr;
+	default: {
+		auto result = AUBase::GetPropertyInfo(inID, inScope, inElement, outDataSize, outWritable);
+
+		if (result == kAudioUnitErr_InvalidProperty) {
+			result = AUMIDIBase::DelegateGetPropertyInfo(
+				inID, inScope, inElement, outDataSize, outWritable);
+		}
+		return result;
+	}
+	}
+}
+
+OSStatus MusicDeviceBase::GetProperty(
+	AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement, void* outData)
+{
+	switch (inID) { // NOLINT if/else
+	case kMusicDeviceProperty_InstrumentCount: {
+		AUSDK_Require(inScope == kAudioUnitScope_Global, kAudioUnitErr_InvalidScope);
+		UInt32 instrumentCount{};
+		const auto result = GetInstrumentCount(instrumentCount);
+		Serialize(instrumentCount, outData);
+		return result;
+	}
+	default: {
+		auto result = AUBase::GetProperty(inID, inScope, inElement, outData);
+
+		if (result == kAudioUnitErr_InvalidProperty) {
+			result = AUMIDIBase::DelegateGetProperty(inID, inScope, inElement, outData);
+		}
+		return result;
+	}
+	}
+}
+
+
+OSStatus MusicDeviceBase::SetProperty(AudioUnitPropertyID inID, AudioUnitScope inScope,
+	AudioUnitElement inElement, const void* inData, UInt32 inDataSize)
+
+{
+
+	OSStatus result = AUBase::SetProperty(inID, inScope, inElement, inData, inDataSize);
+
+	if (result == kAudioUnitErr_InvalidProperty) {
+		result = AUMIDIBase::DelegateSetProperty(inID, inScope, inElement, inData, inDataSize);
+	}
+
+	return result;
+}
+
+// For a MusicDevice that doesn't support separate instruments (ie. is mono-timbral)
+// then this call should return an instrument count of zero and noErr
+OSStatus MusicDeviceBase::GetInstrumentCount(UInt32& outInstCount) const
+{
+	outInstCount = 0;
+	return noErr;
+}
+
+OSStatus MusicDeviceBase::HandleNoteOn(
+	UInt8 inChannel, UInt8 inNoteNumber, UInt8 inVelocity, UInt32 inStartFrame) AUSDK_RTSAFE
+{
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunknown-warning-option"
+#pragma clang diagnostic ignored "-Wmissing-designated-field-initializers"
+	const MusicDeviceNoteParams params{ .argCount = 2,
+		.mPitch = static_cast<Float32>(inNoteNumber),
+		.mVelocity = static_cast<Float32>(inVelocity) };
+#pragma clang diagnostic pop
+	return StartNote(kMusicNoteEvent_UseGroupInstrument, inChannel, nullptr, inStartFrame, params);
+}
+
+OSStatus MusicDeviceBase::HandleNoteOff(
+	UInt8 inChannel, UInt8 inNoteNumber, UInt8 /*inVelocity*/, UInt32 inStartFrame) AUSDK_RTSAFE
+{
+	return StopNote(inChannel, inNoteNumber, inStartFrame);
+}
+
+AUSDK_END_NO_RT_WARNINGS
+
+} // namespace ausdk
+
+#endif // AUSDK_HAVE_MUSIC_DEVICE
