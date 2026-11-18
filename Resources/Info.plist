@@ -38,6 +38,11 @@
             <key>CFBundleTypeRole</key><string>Viewer</string>
             <key>LSItemContentTypes</key><array><string>public.midi-audio</string></array>
         </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>MusicXML File</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>CFBundleTypeExtensions</key><array><string>musicxml</string><string>mxl</string></array>
+        </dict>
     </array>
 </dict>
 </plist>

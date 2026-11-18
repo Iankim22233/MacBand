@@ -823,47 +823,61 @@ final class Session: ObservableObject {
     enum TempoChoice { case ask, useFile, keepProject }
 
     func importMIDI(url: URL, tempo choice: TempoChoice = .ask) {
-        do {
-            let imp = try MIDIFile.parse(Data(contentsOf: url))
-            guard !imp.tracks.isEmpty else { errorMessage = "That MIDI file doesn't contain any notes."; return }
-            let name = url.deletingPathExtension().lastPathComponent
-            let wasEmpty = project.tracks.allSatisfy { $0.clips.allSatisfy { $0.notes.isEmpty } }
-            // An empty project simply takes the file's tempo map. Otherwise the file's timing is only used if asked for,
-            // so importing a second file doesn't silently rewrite the first one's tempo.
-            var useFileTiming = wasEmpty
-            let differs = !imp.tempoPoints.isEmpty || abs(imp.tempo - project.tempo) > 0.01
-                || imp.timeSigNum != project.timeSigNum || imp.timeSigDen != project.timeSigDen
-            if !wasEmpty && differs {
-                switch choice {
-                case .useFile: useFileTiming = true
-                case .keepProject: useFileTiming = false
-                case .ask: useFileTiming = askToUseFileTempo(imp, fileName: name)
-                }
+        do { importScore(try MIDIFile.parse(Data(contentsOf: url)), name: url.deletingPathExtension().lastPathComponent, tempo: choice) }
+        catch { errorMessage = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)" }
+    }
+
+    func importMusicXML() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ["musicxml", "mxl", "xml"].compactMap { UTType(filenameExtension: $0) }
+        panel.title = "Import MusicXML File"
+        if panel.runModal() == .OK, let url = panel.url { importMusicXML(url: url) }
+    }
+
+    func importMusicXML(url: URL, tempo choice: TempoChoice = .ask) {
+        do { importScore(try MusicXML.load(url: url), name: url.deletingPathExtension().lastPathComponent, tempo: choice) }
+        catch { errorMessage = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)" }
+    }
+
+    /// Adds a parsed MIDI or MusicXML score to the project as one track per part.
+    private func importScore(_ imp: MIDIFile.Imported, name: String, tempo choice: TempoChoice) {
+        guard !imp.tracks.isEmpty else { errorMessage = "That file doesn't contain any notes."; return }
+        let wasEmpty = project.tracks.allSatisfy { $0.clips.allSatisfy { $0.notes.isEmpty } }
+        // An empty project simply takes the file's tempo map. Otherwise the file's timing is only used if asked for,
+        // so importing a second file doesn't silently rewrite the first one's tempo.
+        var useFileTiming = wasEmpty
+        let differs = !imp.tempoPoints.isEmpty || abs(imp.tempo - project.tempo) > 0.01
+            || imp.timeSigNum != project.timeSigNum || imp.timeSigDen != project.timeSigDen
+        if !wasEmpty && differs {
+            switch choice {
+            case .useFile: useFileTiming = true
+            case .keepProject: useFileTiming = false
+            case .ask: useFileTiming = askToUseFileTempo(imp, fileName: name)
             }
-            pushUndo()
-            var bar = project.beatsPerBar
-            if useFileTiming { bar = Double(imp.timeSigNum) * 4.0 / Double(imp.timeSigDen) }
-            let tracks = MIDIFile.makeTracks(imp, beatsPerBar: bar, firstColor: project.tracks.count)
-            modify {
-                if wasEmpty {
-                    $0.tracks.removeAll { $0.clips.allSatisfy { $0.notes.isEmpty } }
-                    $0.name = name
-                }
-                if useFileTiming {
-                    $0.tempo = imp.tempo; $0.tempoPoints = imp.tempoPoints
-                    $0.timeSigNum = imp.timeSigNum; $0.timeSigDen = imp.timeSigDen
-                }
-                $0.tracks.append(contentsOf: tracks)
+        }
+        pushUndo()
+        var bar = project.beatsPerBar
+        if useFileTiming { bar = Double(imp.timeSigNum) * 4.0 / Double(imp.timeSigDen) }
+        let tracks = MIDIFile.makeTracks(imp, beatsPerBar: bar, firstColor: project.tracks.count)
+        modify {
+            if wasEmpty {
+                $0.tracks.removeAll { $0.clips.allSatisfy { $0.notes.isEmpty } }
+                $0.name = name
             }
-            selectedTrackID = tracks.first?.id
-            selectedClipID = tracks.first?.clips.first?.id
-            seek(to: 0)
-            var msg = "Imported \(tracks.count) track\(tracks.count == 1 ? "" : "s") from “\(name)”"
-            if useFileTiming && !imp.tempoPoints.isEmpty { msg += " with \(imp.tempoPoints.count) tempo change\(imp.tempoPoints.count == 1 ? "" : "s")" }
-            else if !useFileTiming && differs { msg += " (kept the project's tempo)" }
-            if imp.sustainedNotes > 0 { msg += " · sustain pedal held \(imp.sustainedNotes) notes" }
-            showToast(msg)
-        } catch { errorMessage = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)" }
+            if useFileTiming {
+                $0.tempo = imp.tempo; $0.tempoPoints = imp.tempoPoints
+                $0.timeSigNum = imp.timeSigNum; $0.timeSigDen = imp.timeSigDen
+            }
+            $0.tracks.append(contentsOf: tracks)
+        }
+        selectedTrackID = tracks.first?.id
+        selectedClipID = tracks.first?.clips.first?.id
+        seek(to: 0)
+        var msg = "Imported \(tracks.count) track\(tracks.count == 1 ? "" : "s") from “\(name)”"
+        if useFileTiming && !imp.tempoPoints.isEmpty { msg += " with \(imp.tempoPoints.count) tempo change\(imp.tempoPoints.count == 1 ? "" : "s")" }
+        else if !useFileTiming && differs { msg += " (kept the project's tempo)" }
+        if imp.sustainedNotes > 0 { msg += " · sustain pedal held \(imp.sustainedNotes) notes" }
+        showToast(msg)
     }
 
     private func askToUseFileTempo(_ imp: MIDIFile.Imported, fileName: String) -> Bool {
@@ -917,6 +931,7 @@ final class Session: ObservableObject {
         for u in urls {
             switch u.pathExtension.lowercased() {
             case "mid", "midi": importMIDI(url: u)
+            case "musicxml", "mxl", "xml": importMusicXML(url: u)
             case "macband": if project.tracks.isEmpty || !isDirty { openProject(url: u) } else { importBandProject(url: u) }
             case "wav", "wave", "aif", "aiff", "mp3", "m4a", "caf", "flac", "aac", "ogg", "mp4": importAudio(url: u)
             case "component", "vst3", "vst": installPlugins([u])

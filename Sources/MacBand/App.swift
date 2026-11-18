@@ -26,6 +26,7 @@ struct MacBandApp: App {
                 Divider()
                 Menu("Import") {
                     Button("MIDI File…") { session.importMIDI() }.keyboardShortcut("i")
+                    Button("MusicXML File…") { session.importMusicXML() }
                     Button("Audio File…") { session.importAudio() }.keyboardShortcut("i", modifiers: [.command, .shift])
                     Button("Band Project…") { session.importBandProject() }
                 }
