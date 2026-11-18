@@ -44,6 +44,7 @@ Plugins are read from `~/Library/Audio/Plug-Ins` (Components = AU, VST3, VST) an
 
 ## Files
 - **Band project** `.macband` – File ▸ Save / Export Band Project, Import ▸ Band Project (merges tracks, plugin states included).
+- **MusicXML** – Import ▸ MusicXML File (`.musicxml`, `.xml`, compressed `.mxl`; also by drag and drop): one track per part with chords, ties, transposing instruments, drum parts, tempo marks, dynamics, repeats with 1st/2nd endings and pickup bars. D.C./D.S./coda jumps, grace notes and gradual tempo changes aren't read.
 - **MIDI** – Import ▸ MIDI File (tracks, tempo map, time signature, CC7 → volume automation), Export ▸ MIDI File (slides become pitch bends, volume automation becomes CC7).
 - **Audio** – Export ▸ Audio (WAV), 24-bit offline bounce.
 

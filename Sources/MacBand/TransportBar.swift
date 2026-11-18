@@ -16,6 +16,7 @@ struct TransportBar: View {
                 Text(session.lastAutoSaveText)
                 Divider()
                 Button("Import MIDI File…") { session.importMIDI() }
+                Button("Import MusicXML File…") { session.importMusicXML() }
                 Button("Import Band Project…") { session.importBandProject() }
                 Divider()
                 Button("Export MIDI File…") { session.exportMIDI() }

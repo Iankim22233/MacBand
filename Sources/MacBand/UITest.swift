@@ -58,6 +58,119 @@ import Foundation
         s.transport.beat = 0
     }
 
+    /// MusicXML import: chords, ties, transposing instruments, drums, tempo, repeats with endings, pickup bars and .mxl.
+    static func musicXMLImport() {
+        print("-- MusicXML import")
+        func note(_ step: String, _ oct: Int, _ dur: Int, alter: Int? = nil, chord: Bool = false, tie: String? = nil, rest: Bool = false) -> String {
+            var x = "<note>"
+            if chord { x += "<chord/>" }
+            x += rest ? "<rest/>" : "<pitch><step>\(step)</step>\(alter.map { "<alter>\($0)</alter>" } ?? "")<octave>\(oct)</octave></pitch>"
+            x += "<duration>\(dur)</duration>"
+            if let tie { x += tie == "both" ? "<tie type=\"stop\"/><tie type=\"start\"/>" : "<tie type=\"\(tie)\"/>" }
+            return x + "</note>"
+        }
+        func score(_ partList: String, _ body: String) -> Data {
+            Data(("<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE score-partwise PUBLIC \"-//Recordare//DTD MusicXML 3.1 Partwise//EN\" \"http://www.musicxml.org/dtds/partwise.dtd\"><score-partwise version=\"3.1\"><part-list>\(partList)</part-list>\(body)</score-partwise>").utf8)
+        }
+        let attrs = "<attributes><divisions>2</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>"
+
+        // Piano: bar 1 = C4 quarter, C-major chord (C4 E4 G4) half, quarter rest; bar 2 = C4 tied over from bar 1? no: a C5 whole tied into bar 3.
+        let piano = """
+        <part id="P1">
+          <measure number="1">\(attrs)
+            <direction><sound tempo="96"/></direction>
+            \(note("C", 4, 2))\(note("C", 4, 4))\(note("E", 4, 4, chord: true))\(note("G", 4, 4, chord: true))\(note("C", 4, 2, rest: true))
+          </measure>
+          <measure number="2">\(note("C", 5, 8, tie: "start"))</measure>
+          <measure number="3"><direction><sound tempo="144"/></direction>\(note("C", 5, 4, tie: "stop"))\(note("D", 5, 4, alter: 1))</measure>
+        </part>
+        """
+        let list = """
+        <score-part id="P1"><part-name>Piano</part-name></score-part>
+        <score-part id="P2"><part-name>Clarinet in Bb</part-name><midi-instrument id="P2-I1"><midi-channel>2</midi-channel><midi-program>72</midi-program></midi-instrument></score-part>
+        <score-part id="P3"><part-name>Drums</part-name><midi-instrument id="P3-I36"><midi-channel>10</midi-channel><midi-unpitched>36</midi-unpitched></midi-instrument></score-part>
+        """
+        // Clarinet in Bb writes a major second higher than it sounds: written C5 sounds Bb4.
+        let clarinet = """
+        <part id="P2"><measure number="1"><attributes><divisions>2</divisions><transpose><chromatic>-2</chromatic></transpose></attributes>\(note("C", 5, 8))</measure></part>
+        """
+        let drums = """
+        <part id="P3"><measure number="1"><attributes><divisions>2</divisions></attributes>
+        <note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>4</duration><instrument id="P3-I36"/></note></measure></part>
+        """
+        guard let imp = try? MusicXML.parse(score(list, piano + clarinet + drums)) else { check(false, "the score parses"); return }
+        check(imp.tracks.count == 3, "one track per part (\(imp.tracks.count))")
+        check(imp.tracks.map { $0.name } == ["Piano", "Clarinet in Bb", "Drums"], "parts keep their names (\(imp.tracks.map { $0.name }))")
+        let pn = imp.tracks[0].notes
+        check(pn.count == 6, "piano: 1 + chord of 3 + tied C5 (counted once) + D#5 = 6 notes (\(pn.count))")
+        check(pn.filter { $0.start == 1 }.map { $0.pitch }.sorted() == [60, 64, 67], "a chord's notes start together")
+        check(abs((pn.first { $0.start == 1 }?.length ?? 0) - 2) < 1e-9, "a half note is 2 beats long")
+        let tied = pn.first { $0.pitch == 72 }
+        check(tied?.start == 4 && tied?.length == 6, "the tie joins the whole note and its continuation into one 6-beat note (\(String(describing: tied?.length)))")
+        check(pn.contains { $0.pitch == 75 && $0.start == 10 }, "D♯5 = 75, in beat 10")
+        check(imp.tracks[1].notes.first?.pitch == 70, "Clarinet in B♭ sounds a tone lower than written (\(imp.tracks[1].notes.first?.pitch ?? -1))")
+        check(imp.tracks[1].program == 71, "the file's MIDI program (72, 1-based) becomes GM 71")
+        check(imp.tracks[2].channel == 9 && imp.tracks[2].notes.first?.pitch == 35, "an unpitched part becomes a drum track with the file's note (35)")
+        check(Int(imp.tempo) == 96 && imp.tempoPoints.map({ Int($0.bpm) }) == [144] && imp.tempoPoints.first?.beat == 8, "tempo marks become the tempo map (\(imp.tempo), \(imp.tempoPoints.map { "\($0.bpm)@\($0.beat)" }))")
+        check(imp.timeSigNum == 4 && imp.timeSigDen == 4, "time signature 4/4")
+
+        // Repeat with a 1st and a 2nd ending: A B | 1st ending C :| 2nd ending D  →  A B C A B D
+        func bar(_ n: Int, _ step: String, extra: String = "") -> String {
+            "<measure number=\"\(n)\">" + (n == 1 ? attrs : "") + extra + note(step, 4, 8) + "</measure>"
+        }
+        let rep = """
+        <part id="P1">
+        \(bar(1, "A", extra: "<barline location=\"left\"><repeat direction=\"forward\"/></barline>"))
+        \(bar(2, "B"))
+        <measure number="3"><barline location="left"><ending number="1" type="start"/></barline>\(note("C", 4, 8))<barline location="right"><ending number="1" type="stop"/><repeat direction="backward"/></barline></measure>
+        <measure number="4"><barline location="left"><ending number="2" type="start"/></barline>\(note("D", 4, 8))<barline location="right"><ending number="2" type="discontinue"/></barline></measure>
+        </part>
+        """
+        let one = "<score-part id=\"P1\"><part-name>Lead</part-name></score-part>"
+        if let r = try? MusicXML.parse(score(one, rep)) {
+            let seq = r.tracks[0].notes.sorted { $0.start < $1.start }.map { $0.pitch }
+            check(seq == [69, 71, 60, 69, 71, 62], "repeat with 1st/2nd endings plays A B C A B D (\(seq))")
+            check(r.tracks[0].notes.last?.start == 20, "…so the 2nd ending lands in bar 6 (beat 20)")
+        } else { check(false, "the repeat score parses") }
+
+        // Pickup bar: one quarter note before the first full bar. It is moved so the first full bar starts on a bar line.
+        let pickup = """
+        <part id="P1">
+        <measure number="0" implicit="yes">\(attrs)\(note("G", 4, 2))</measure>
+        <measure number="1">\(note("C", 5, 8))</measure>
+        </part>
+        """
+        if let r = try? MusicXML.parse(score(one, pickup)) {
+            let ns = r.tracks[0].notes.sorted { $0.start < $1.start }
+            check(ns.count == 2 && ns[0].start == 3 && ns[1].start == 4, "the pickup note ends on the bar line, and bar 1 starts at beat 4 (\(ns.map { $0.start }))")
+        } else { check(false, "the pickup score parses") }
+
+        // Not a score, and a compressed .mxl
+        check((try? MusicXML.parse(Data("<html/>".utf8))) == nil, "other XML is refused")
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("macband-mxl-test")
+        try? FileManager.default.removeItem(at: dir)
+        try? FileManager.default.createDirectory(at: dir.appendingPathComponent("META-INF"), withIntermediateDirectories: true)
+        try? score(one, rep).write(to: dir.appendingPathComponent("score.xml"))
+        try? Data("<?xml version=\"1.0\"?><container><rootfiles><rootfile full-path=\"score.xml\" media-type=\"application/vnd.recordare.musicxml+xml\"/></rootfiles></container>".utf8)
+            .write(to: dir.appendingPathComponent("META-INF/container.xml"))
+        let mxl = dir.appendingPathComponent("score.mxl")
+        let z = Process(); z.executableURL = URL(fileURLWithPath: "/usr/bin/zip"); z.currentDirectoryURL = dir
+        z.arguments = ["-q", "-r", "score.mxl", "META-INF", "score.xml"]
+        try? z.run(); z.waitUntilExit()
+        if let r = try? MusicXML.load(url: mxl) { check(r.tracks.first?.notes.count == 6, "a compressed .mxl is unpacked and read (\(r.tracks.first?.notes.count ?? -1) notes)") }
+        else { check(false, "the .mxl loads") }
+
+        // Through the session: tracks, tempo and a toast
+        let s = Session(); SelfTest.pump(0.2)
+        let url = dir.appendingPathComponent("piano.musicxml")
+        try? score(list, piano + clarinet + drums).write(to: url)
+        s.importMusicXML(url: url, tempo: .useFile)
+        check(s.project.tracks.count == 3 && Int(s.project.tempo) == 96 && s.project.tempoPoints.count == 1 && s.errorMessage == nil, "importing through the session adds 3 tracks and the tempo map (\(s.errorMessage ?? "no error"))")
+        check(s.project.tracks[2].instrument.isDrums, "the drum part is a drum track")
+        s.undo()
+        check(s.project.tracks.allSatisfy { $0.clips.allSatisfy { $0.notes.isEmpty } }, "undo removes the import")
+    }
+
     /// MIDI import must carry the file's tempo changes across, including into a project that already has music.
     static func tempoImport() {
         print("-- tempo changes on MIDI import")
@@ -304,6 +417,7 @@ import Foundation
 
         tempoImport()
         sustainImport()
+        musicXMLImport()
         orphanedViews(s)
         tuneCanvas(s)
         print(failures == 0 ? "ALL UI CHECKS PASSED" : "\(failures) UI CHECK(S) FAILED")
@@ -323,7 +437,7 @@ import Foundation
             pump(0.2)
             print("project before the import: tempo", s.project.tempo, "| tracks", s.project.tracks.count)
         }
-        if ext == "mid" || ext == "midi" { s.importMIDI(url: url, tempo: .useFile) } else { s.importBandProject(url: url) }
+        if ext == "mid" || ext == "midi" { s.importMIDI(url: url, tempo: .useFile) } else if ["musicxml", "mxl", "xml"].contains(ext) { s.importMusicXML(url: url, tempo: .useFile) } else { s.importBandProject(url: url) }
         pump(0.2)
         let p = s.project
         print("tracks:", p.tracks.count, "tempo:", p.tempo, "tempo changes:", p.tempoPoints.count, "timesig:", p.timeSigNum, "/", p.timeSigDen, "error:", s.errorMessage ?? "none")
